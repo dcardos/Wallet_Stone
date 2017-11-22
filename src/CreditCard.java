@@ -1,6 +1,8 @@
 import org.joda.time.LocalDate;
 
-import java.math.BigDecimal;
+import javax.money.CurrencyUnit;
+import javax.money.Monetary;
+import javax.money.MonetaryAmount;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -14,12 +16,13 @@ public class CreditCard implements Comparable<CreditCard>{ // immutable class - 
     private final LocalDate mExpiration;
     private final String mName;
     private final String mCvv;
-    private final BigDecimal mLimit;      // do not use float or double for currency, why?
+    private final CurrencyUnit mCurrencyUnit = Monetary.getCurrency("BRL");
+    private final MonetaryAmount mLimit;      // do not use float or double for currency, why?
     // https://stackoverflow.com/questions/3730019/why-not-use-double-or-float-to-represent-currency
-    private BigDecimal mCredit;         // Attention: this field is mutable (using buy and payment method)!
+    private MonetaryAmount mCredit;         // Attention: this member is mutable (using buy and payment method)!
 
 
-    public CreditCard(String number, int payDay, LocalDate expiration, String name, String cvv, BigDecimal limit) {
+    public CreditCard(String number, int payDay, LocalDate expiration, String name, String cvv, MonetaryAmount limit) {
         // TODO: check lenght of the credit card number and use the verification digit
         mNumber = number;
         if (payDay < 0 || payDay > 28) {
@@ -38,14 +41,17 @@ public class CreditCard implements Comparable<CreditCard>{ // immutable class - 
             throw new IllegalArgumentException("cvv has to be 3 or 4 digits");
         }
         mCvv = cvv;
-        // TODO: validate that cents is 0 to 99
-        if (limit.compareTo(new BigDecimal("0")) <= 0) { // negative or 0 value
+        if (limit.isNegativeOrZero()) { // negative or 0 value
             throw new IllegalArgumentException("limit has to be greater than 0");
+        }
+        if (!limit.getCurrency().equals(mCurrencyUnit)) { // match currency unit?
+            throw new IllegalArgumentException("Currency has to be: " + mCurrencyUnit);
         }
         mLimit = limit;
         mCredit = limit;
     }
 
+    // TODO: retrive only last 4 numbers
     public String getNumber() {
         return mNumber;
     }
@@ -71,12 +77,20 @@ public class CreditCard implements Comparable<CreditCard>{ // immutable class - 
         return mCvv;
     }
 
-    public BigDecimal getLimit() {
+    public MonetaryAmount getLimit() {
         return mLimit;
     }
 
-    public BigDecimal getCredit() {
+    public MonetaryAmount getCredit() {
         return mCredit;
+    }
+
+    public LocalDate getExpiration() {
+        return mExpiration;
+    }
+
+    public CurrencyUnit getCurrencyUnit() {
+        return mCurrencyUnit;
     }
 
     //Accessor functions for mutable objects (correcting wrong values)
@@ -100,21 +114,25 @@ public class CreditCard implements Comparable<CreditCard>{ // immutable class - 
         return new CreditCard(mNumber, mPayDay, mExpiration, mName, newCvv, mLimit);
     }
 
-    public CreditCard changeLimit(BigDecimal newLimit) {
-        return new CreditCard(mNumber, mPayDay, mExpiration, mName, mCvv, newLimit);
-    }
+    // involves more calculation because of the credit!
+//    public CreditCard changeLimit(MonetaryAmount newLimit) {
+//        return new CreditCard(mNumber, mPayDay, mExpiration, mName, mCvv, newLimit);
+//    }
 
-    public boolean buyProduct(BigDecimal value) {
-        if (value.signum() == -1 || value.compareTo(mCredit) > 0)
-            return false;   // value is negative or there is no enough credit to make the payment
-        else {
+    public boolean buyProduct(MonetaryAmount value) {
+        if (value.isNegative() || value.isGreaterThan(mCredit)) {
+            LOGGER.log(Level.INFO,
+                    "Cannot buy - value is negative or there is no enough credit to make the payment");
+            return false;
+        } else {
             mCredit = mCredit.subtract(value);
             return true;
         }
     }
 
-    public boolean makePayment(BigDecimal value) {
-        if (value.signum() == -1) {
+    public boolean makePayment(MonetaryAmount value) {
+        if (value.isNegative()) {
+            LOGGER.log(Level.INFO, "Cannot make payment with negative value");
             return false;   // value is negative
         }
         mCredit = mCredit.add(value);   // accepting payment such as credit can be greater than limit
