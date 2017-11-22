@@ -133,7 +133,7 @@ public class CreditCardTest {
     }
 
     // The test below will work only if you are after between the 21st and 28th of the month!
-    // That is why I am commenting it
+    // Comment it if necessary (or change it)
     @Test
     public void priorities() {
         CreditCard cc1 = new CreditCard("22256", 10,

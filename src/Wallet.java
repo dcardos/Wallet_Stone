@@ -5,6 +5,7 @@ import javax.money.CurrencyUnit;
 import javax.money.Monetary;
 import javax.money.MonetaryAmount;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -25,28 +26,22 @@ public class Wallet {
     private final CurrencyUnit mCurrencyUnit = Monetary.getCurrency("BRL");
     private MonetaryAmount mMaxLimit;
     private MonetaryAmount mUserLimit;
-    private MonetaryAmount mTotalAvailableCredit;
-    private MonetaryAmount mUserAvailableCredit;    // used for buying
+    private MonetaryAmount mCreditUsed;    // used for buying
 
     public Wallet(User user, CreditCard creditCard, MonetaryAmount userLimit) {
         mCreditCards = new ArrayList<>();
         mUser = user;
         // setting next values based on the credit card - initializing monetary members
         mMaxLimit = creditCard.getLimit();
-        mTotalAvailableCredit = Monetary.getDefaultAmountFactory().setCurrency(mCurrencyUnit).setNumber(0).create();
-        mUserAvailableCredit = Monetary.getDefaultAmountFactory().setCurrency(mCurrencyUnit).setNumber(0).create();
+        mCreditUsed = Monetary.getDefaultAmountFactory().setCurrency(mCurrencyUnit).setNumber(0).create();
         if (!creditCard.getCurrencyUnit().equals(mCurrencyUnit)) {
             throw new IllegalArgumentException("The credid card currency unit has to be: " + mCurrencyUnit);
         }
         mCreditCards.add(creditCard);
-        mTotalAvailableCredit = mTotalAvailableCredit.add(creditCard.getCredit());
-        mUserAvailableCredit = mTotalAvailableCredit;   // so far is the same as the total credit
         if (userLimit.isGreaterThan(mMaxLimit)) {
             throw new IllegalArgumentException("Tried to set a limit more than permitted");
         }
         mUserLimit = userLimit;
-        // making sure that no buying will be made more than the user limit
-        mUserAvailableCredit = mUserAvailableCredit.isGreaterThan(mUserLimit) ? mUserLimit : mUserAvailableCredit;
     }
 
     public boolean addCreditCard(CreditCard creditCard) {
@@ -59,10 +54,6 @@ public class Wallet {
         } else {
             mCreditCards.add(creditCard);
             mMaxLimit = mMaxLimit.add(creditCard.getLimit());
-            mTotalAvailableCredit = mTotalAvailableCredit.add(creditCard.getCredit());
-            mUserAvailableCredit = mUserAvailableCredit.add(creditCard.getCredit());
-            // making sure that no buying will be made more than the user limit
-            mUserAvailableCredit = mUserAvailableCredit.isGreaterThan(mUserLimit) ? mUserLimit : mUserAvailableCredit;
             return true;
         }
     }
@@ -77,9 +68,6 @@ public class Wallet {
             if (mUserLimit.isGreaterThan(mMaxLimit)) {    // if user limit became more than maximum
                 setUserLimit(mMaxLimit); // then change it to the new maximum value
             }
-            mTotalAvailableCredit = mTotalAvailableCredit.subtract(creditCard.getCredit());
-            mUserAvailableCredit = mTotalAvailableCredit;    // re-setting user credit
-            mUserAvailableCredit = mUserAvailableCredit.isGreaterThan(mUserLimit) ? mUserLimit : mUserAvailableCredit;
             return true;
         } else {
             LOGGER.log(Level.WARNING, "Could not remove the credit card!");
@@ -93,9 +81,6 @@ public class Wallet {
             return false;
         } else {
             mUserLimit = userLimit;
-            // making sure that no buying will be made more than the user limit
-            mUserAvailableCredit = mTotalAvailableCredit;   // re-setting user available credit
-            mUserAvailableCredit = mUserAvailableCredit.isGreaterThan(mUserLimit) ? mUserLimit : mUserAvailableCredit;
             return true;
         }
     }
@@ -112,12 +97,59 @@ public class Wallet {
         return mUserLimit;
     }
 
-    public MonetaryAmount getTotalAvailableCredit() {
-        return mTotalAvailableCredit;
+    public MonetaryAmount getUserAvailableCredit() {
+        return mUserLimit.subtract(mCreditUsed);
     }
 
-    public MonetaryAmount getUserAvailableCredit() {
-        return mUserAvailableCredit;
+    public MonetaryAmount getTotalAvailableCredit() {
+        return mMaxLimit.subtract(mCreditUsed);
+    }
+
+    public List<CreditCard> getCreditCards() {
+        List<CreditCard> clone = new ArrayList<>(mCreditCards);
+        return clone;   // Again, DO NOT return a reference to mCreditCards
+    }
+
+    public boolean buy(MonetaryAmount price) {
+        if (price.isNegativeOrZero()) {
+            LOGGER.log(Level.INFO, "Attempt to buy something with negative or zero as price");
+            return false;
+        } else if (getUserAvailableCredit().isLessThan(price)) {
+            LOGGER.log(Level.INFO, "Attempt to buy something that exceeds the user credit available");
+            return false;
+        } else {
+            // is possible to buy this, updating credit used amount
+            mCreditUsed = mCreditUsed.add(price);
+            // sorting cards buy the priority (check comparable at class CreditCard)
+            Collections.sort(mCreditCards);
+            /** Somente no caso em que não for possível fazer a compra em um único cartão,
+             * o sistema deve dividir a compra em mais cartões.
+             */
+            for (CreditCard cc : mCreditCards) {
+                if (cc.getCredit().isGreaterThanOrEqualTo(price)) { // credit card with enough credit found
+                    cc.buyProduct(price);
+                    return true;
+                }
+            }
+            // if get to this point it means the price will have to be split between cards
+            /**
+             * Para isso, você vai preenchendo os cartões usando as mesmas ordens de prioridade já descritas.
+             * Ou seja, você gasta primeiro do cartão que está mais longe de vencer e "completa" com o próximo cartão mais longe de vencer.
+             * Caso os cartões vençam no mesmo dia, você gasta primeiro do com menor limite e "completa" com o que tem mais limite.
+             */
+            MonetaryAmount remainder = price;
+            MonetaryAmount valueToBeUsed;
+            int i  = 0;
+            CreditCard cc = mCreditCards.get(i);
+            while (remainder.isPositive()) {    // while there is a value > 0 to be split
+                // check if have to split all the credit for this card or if this amount is more than enough
+                valueToBeUsed = remainder.subtract(cc.getCredit()).isNegative() ? remainder : cc.getCredit();
+                cc.buyProduct(valueToBeUsed);
+                remainder = remainder.subtract(valueToBeUsed);  // update what is left
+                cc = mCreditCards.get(++i); // get next credit card on priority
+            }
+            return true;
+        }
     }
 
     @Override
@@ -136,11 +168,13 @@ public class Wallet {
         DateTimeFormatter fmt = DateTimeFormat.forPattern("dd/MM/yyyy");    // date print pattern
         for (CreditCard cc : mCreditCards) {
             output.append("Last 4 numbers: ").append(cc.getNumber());
-            output.append(", expiration date: ").append(fmt.print(cc.getExpiration()));
+            output.append(", Pay day: ").append(cc.getPayDay());
             output.append(", limit: ").append(cc.getLimit());
             output.append(", credit available: ").append(cc.getCredit());
             output.append(System.getProperty("line.separator"));
         }
         return output.toString();
     }
+
+    // TODO: make payment to free credit used
 }
