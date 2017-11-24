@@ -190,7 +190,7 @@ public class CreditCard implements Comparable<CreditCard>{ // immutable class - 
     public static LocalDate nextPayDate(CreditCard creditCard) {
         LocalDate today = LocalDate.now();
         LocalDate payDayThisMonth = new LocalDate(today.getYear(), today.getMonthOfYear(), creditCard.getPayDay());
-        if (today.compareTo(payDayThisMonth) > 0) {             // today is a day past the pay day, so...
+        if (today.isAfter(payDayThisMonth)) {             // today is a day past the pay day, so...
             payDayThisMonth = payDayThisMonth.plusMonths(1);    // ... pay day has to be set for the next month
         }
         return payDayThisMonth; // returning the new date for the next pay day (this month or the next)
